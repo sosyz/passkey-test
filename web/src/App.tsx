@@ -14,8 +14,6 @@ function App() {
         PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable &&
         PublicKeyCredential.isConditionalMediationAvailable
     ) {
-        console.log("Passkey is supported");
-
         // Check if user verifying platform authenticator is available.
         Promise.all([
             PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(),
@@ -107,14 +105,16 @@ function App() {
 
             const publicKey = {
                 challenge: base64ToBuffer(data.publicKey.challenge),
-                rpId: data.publicKey.rpId,
-                allowCredentials: data.publicKey.allowCredentials?.map(
-                    (cred: Credential) => ({
-                        type: cred.type,
-                        id: base64ToBuffer(cred.id),
-                    })
-                ),
-                userVerification: "preferred",
+                rpId: window.location.hostname,
+                ...(data.publicKey.allowCredentials && {
+                    allowCredentials: data.publicKey.allowCredentials.map(
+                        (cred: Credential) => ({
+                            type: cred.type,
+                            id: base64ToBuffer(cred.id),
+                        })
+                    ),
+                }),
+                userVerification: "required",
             } as PublicKeyCredentialRequestOptions;
             console.log(publicKey);
 
@@ -122,7 +122,6 @@ function App() {
             const credential = (await navigator.credentials.get({
                 publicKey: publicKey,
                 signal: abortController.signal,
-                mediation: "conditional",
             })) as PublicKeyCredential;
 
             if (!credential) {
@@ -175,20 +174,18 @@ function App() {
     return (
         <>
             <h1>Passkey Authentication Test</h1>
-            <div>
-                <label htmlFor="username">Username</label>
-                <input
-                    type="text"
-                    id="username"
-                    autoComplete="username webauthn"
-                />
+            <div style={{ display: "flex", flexDirection: "column" }}>
                 {isPasskeySupported && (
                     <button onClick={createPasskey}>
                         Create a new passkey
                     </button>
                 )}
                 {isPasskeySupported && (
-                    <button onClick={loginWithPasskey} disabled={isLoggingIn}>
+                    <button
+                        style={{ marginTop: "10px" }}
+                        onClick={loginWithPasskey}
+                        disabled={isLoggingIn}
+                    >
                         {isLoggingIn ? "Logging in..." : "Login with passkey"}
                     </button>
                 )}

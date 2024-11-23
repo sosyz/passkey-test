@@ -4,8 +4,10 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -15,7 +17,7 @@ type User struct {
 	ID          []byte // 添加用户唯一标识
 	DisplayName string // 添加显示名
 	SessionData webauthn.SessionData
-	Credentials []webauthn.Credential // 改为切片存储多个凭证
+	Credentials []webauthn.Credential
 }
 
 func (u User) WebAuthnID() []byte {
@@ -53,10 +55,12 @@ var (
 	}
 )
 
-func setupCORS(handler http.HandlerFunc) http.HandlerFunc {
+type handlerFunc func(http.ResponseWriter, *http.Request) (any, error)
+
+func handleMiddle(handler handlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// 设置 CORS 头
-		w.Header().Set("Access-Control-Allow-Origin", "http://localhost")
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:5173")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
@@ -67,7 +71,16 @@ func setupCORS(handler http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		handler(w, r)
+		resp, err := handler(w, r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if resp != nil {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(resp)
+		}
 	}
 }
 
@@ -75,10 +88,19 @@ func main() {
 	wconfig := &webauthn.Config{
 		RPDisplayName: "Answer",
 		RPID:          "localhost",
-		RPOrigins:     []string{"http://localhost", "http://localhost"},
+		RPOrigins:     []string{"http://localhost:5173"},
 		AuthenticatorSelection: protocol.AuthenticatorSelection{
-			ResidentKey:      protocol.ResidentKeyRequirementRequired,
-			UserVerification: protocol.VerificationPreferred,
+			ResidentKey:             protocol.ResidentKeyRequirementRequired,
+			UserVerification:        protocol.VerificationRequired,
+			AuthenticatorAttachment: protocol.Platform,
+		},
+		Timeouts: webauthn.TimeoutsConfig{
+			Login: webauthn.TimeoutConfig{
+				Timeout: 300 * time.Second,
+			},
+			Registration: webauthn.TimeoutConfig{
+				Timeout: 300 * time.Second,
+			},
 		},
 		AttestationPreference: protocol.PreferDirectAttestation,
 	}
@@ -91,10 +113,15 @@ func main() {
 		fmt.Println(err)
 	}
 
-	http.HandleFunc("/begin-registration", setupCORS(BeginRegistration))
-	http.HandleFunc("/finish-registration", setupCORS(FinishRegistration))
-	http.HandleFunc("/begin-login", setupCORS(BeginLogin))
-	http.HandleFunc("/finish-login", setupCORS(FinishLogin))
+	router := map[string]handlerFunc{
+		"/begin-registration":  BeginRegistration,
+		"/finish-registration": FinishRegistration,
+		"/begin-login":         BeginLogin,
+		"/finish-login":        FinishLogin,
+	}
+	for path, handler := range router {
+		http.HandleFunc(path, handleMiddle(handler))
+	}
 
 	if err := http.ListenAndServe(":8080", nil); err != nil {
 		panic(err)
